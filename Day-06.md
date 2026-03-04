@@ -10,8 +10,12 @@
 
 Every resource we've seen so far runs **forever:**
 ```
-Deployment → "keep these pods running always"
-DaemonSet  → "keep one pod per node always"
+Deployment  → keep specified number of pods running, supports rolling updates
+DaemonSet   → run one pod on every node
+ReplicaSet  → maintain a fixed number of identical pods
+Job         → run a pod until the task finishes successfully
+CronJob     → run jobs on a schedule (like cron)
+StatefulSet → manage stateful pods with stable identity and storage
 ```
 
 But sometimes you need a pod that:
