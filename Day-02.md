@@ -8,6 +8,26 @@
 
 When you set up Kubernetes, you get a **cluster**. A cluster is made of **nodes** (servers/VMs).
 
+Node (in Kubernetes) = A node is simply a machine that runs containers.
+That machine can be:
+- a virtual machine (VM)
+- a physical server
+- a cloud instance
+
+```
+Kubernetes Cluster
+      │
+ ┌────┴────┐
+ Node1   Node2   Node3
+   │        │        │
+ Pods     Pods     Pods
+```
+
+- Cluster = group of machines
+- Node = one machine inside the cluster
+- Pod = containers running on that machine
+  
+
 These nodes are divided into **2 types:**
 
 ```
@@ -227,27 +247,27 @@ These run on **every worker node**.
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │                  CONTROL PLANE (Master)                  │  │
 │  │                                                          │  │
-│  │  ┌────────────┐  ┌───────┐  ┌──────────┐  ┌─────────┐  │  │
-│  │  │ API Server │  │ etcd  │  │Scheduler │  │Ctrl Mgr │  │  │
-│  │  └─────┬──────┘  └───────┘  └──────────┘  └─────────┘  │  │
+│  │  ┌────────────┐  ┌───────┐  ┌──────────┐  ┌─────────┐    │  │
+│  │  │ API Server │  │ etcd  │  │Scheduler │  │Ctrl Mgr │    │  │
+│  │  └─────┬──────┘  └───────┘  └──────────┘  └─────────┘    │  │
 │  │        │                                                 │  │
-│  └────────┼────────────────────────────────────────────────┘  │
+│  └────────┼────────────────────────────────────────────── ──┘  │
 │           │ (all communication goes via API server)            │
 │    ┌──────┴──────────────────────────────────┐                 │
 │    │                                         │                 │
-│  ┌─▼──────────────────┐   ┌──────────────────▼──┐             │
-│  │   WORKER NODE 1    │   │   WORKER NODE 2      │            │
-│  │                    │   │                      │            │
-│  │ ┌────────────────┐ │   │ ┌────────────────┐   │            │
-│  │ │    Kubelet     │ │   │ │    Kubelet     │   │            │
-│  │ ├────────────────┤ │   │ ├────────────────┤   │            │
-│  │ │   Kube-proxy   │ │   │ │   Kube-proxy   │   │            │
-│  │ ├────────────────┤ │   │ ├────────────────┤   │            │
-│  │ │Container Runtime│ │   │ │Container Runtime│  │            │
-│  │ ├────────────────┤ │   │ ├────────────────┤   │            │
-│  │ │  Pod  │  Pod   │ │   │ │  Pod  │  Pod   │   │            │
-│  │ └────────────────┘ │   │ └────────────────┘   │            │
-│  └────────────────────┘   └──────────────────────┘            │
+│  ┌─▼──────────────────┐   ┌──────────────────▼─ ─┐             │
+│  │   WORKER NODE 1    │   │   WORKER NODE 2      │             │
+│  │                    │   │                      │             │
+│  │ ┌────────────────┐ │   │ ┌────────────────┐   │             │
+│  │ │    Kubelet     │ │   │ │    Kubelet     │   │             │
+│  │ ├────────────────┤ │   │ ├────────────────┤   │             │
+│  │ │   Kube-proxy   │ │   │ │   Kube-proxy   │   │             │
+│  │ ├────────────────┤ │   │ ├────────────────┤   │             │
+│  │ │Container Runtime│ │   │ │Container Runtime│ │             │
+│  │ ├────────────────┤ │   │ ├────────────────┤   │             │
+│  │ │  Pod  │  Pod   │ │   │ │  Pod  │  Pod   │   │             │
+│  │ └────────────────┘ │   │ └────────────────┘   │             │
+│  └────────────────────┘   └──────────────────────┘             │
 └────────────────────────────────────────────────────────────────┘
 ```
 
