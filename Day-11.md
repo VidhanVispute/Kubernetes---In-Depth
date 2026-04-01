@@ -1,690 +1,615 @@
-# 📘 Chapter 10 — Resource Quotas, Limits & Probes
+# 📘 Chapter 11 — Taints, Tolerations & Node Affinity
 
-> This chapter separates juniors from seniors. Knowing how to **constrain resources** and **define health checks** properly is what keeps production clusters stable. Heavily asked in interviews.
+> This chapter is about **control**. In production you have different types of nodes — GPU nodes, spot instances, high-memory nodes, nodes for specific teams. This is how you control which pods land where.
 
 ---
 
-## 🔷 Why This Matters
+## 🔷 The Problem First
 
 ```
-Without resource limits:
+Production cluster has mixed nodes:
 
-  App A has a memory leak
-       ↓
-  Consumes all 16GB RAM on node
-       ↓
-  Node runs out of memory
-       ↓
-  K8s starts killing OTHER pods on same node
-       ↓
-  Your entire team's apps go down 💀
+  Node-1: GPU node     (expensive, $$$)  → only ML workloads
+  Node-2: Spot node    (cheap, unstable) → only batch jobs
+  Node-3: High-memory  (16GB RAM)        → only databases
+  Node-4: General      (standard)        → everything else
 
-Without probes:
+Without controls:
+  Scheduler places pods randomly
+  ML pod lands on general node → no GPU → crashes
+  Database lands on spot node  → spot terminated → data risk
+  Random pods fill GPU node    → ML team can't schedule
 
-  App starts but is still loading
-       ↓
-  K8s sends traffic to it immediately
-       ↓
-  Users get 502 errors ❌
-
-  OR
-
-  App deadlocks silently — process running
-  but not responding to requests
-       ↓
-  K8s thinks it's healthy (process is up)
-       ↓
-  Traffic keeps hitting dead app 💀
+With Taints/Tolerations + Node Affinity:
+  Each node only accepts the right pods ✅
 ```
 
 ---
 
-## 🔷 PART 1 — Resource Requests & Limits
-
-### Requests vs Limits
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                                                         │
-│  requests  = minimum guaranteed resources               │
-│              "I need at least this much to run"         │
-│              Used by SCHEDULER to place pod on a node   │
-│                                                         │
-│  limits    = maximum allowed resources                  │
-│              "I must never exceed this"                 │
-│              Enforced by KUBELET at runtime             │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-```
-
-**CPU behavior:**
-```
-CPU request → scheduler finds node with enough CPU
-CPU limit   → container is THROTTLED (slowed down)
-              never killed for CPU — just slowed
-```
-
-**Memory behavior:**
-```
-Memory request → scheduler finds node with enough memory
-Memory limit   → container is KILLED (OOMKilled)
-                 if it exceeds limit
-                 → pod restarts
-```
-
----
-
-### 🔷 CPU & Memory Units
-
-```
-CPU:
-  1 CPU    = 1000m (millicores)
-  0.5 CPU  = 500m
-  0.25 CPU = 250m
-
-  250m  → 25% of one CPU core
-  1000m → one full CPU core
-  2000m → two full CPU cores
-
-Memory:
-  Ki = Kibibyte  (1024 bytes)    ← k8s uses this
-  Mi = Mebibyte  (1024 Ki)
-  Gi = Gibibyte  (1024 Mi)
-
-  64Mi  → 64 Mebibytes
-  128Mi → 128 Mebibytes
-  1Gi   → 1 Gibibyte
-```
-
----
-
-### 🛠️ Resource Requests & Limits in Pod YAML
-
-```yaml
-# resource-pod.yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: resource-demo
-  namespace: dev
-spec:
-  containers:
-    - name: app
-      image: nginx:1.25
-      resources:
-        requests:
-          memory: "64Mi"     # scheduler: find node with 64Mi free
-          cpu: "250m"        # scheduler: find node with 0.25 CPU free
-        limits:
-          memory: "128Mi"    # kill if exceeds 128Mi (OOMKilled)
-          cpu: "500m"        # throttle if exceeds 500m
-```
-
----
-
-### 🔷 What Happens Without Requests/Limits?
-
-```
-No requests set:
-  Scheduler has no info → places pod anywhere
-  Node might be overloaded → pod runs slowly
-  "Burstable" QoS class → first to be evicted
-
-No limits set:
-  Pod can consume unlimited resources
-  One bad pod can starve every other pod on node
-  Memory leak = node crash
-
-Production rule:
-  ALWAYS set both requests AND limits ✅
-```
-
----
-
-### 🔷 QoS Classes (Quality of Service)
-
-K8s assigns QoS class automatically based on requests/limits:
-
-```
-┌───────────────┬──────────────────────────────┬───────────────┐
-│  QoS Class    │  Condition                   │  Eviction     │
-├───────────────┼──────────────────────────────┼───────────────┤
-│ Guaranteed    │ requests == limits           │ Last evicted  │
-│               │ (both set, same value)       │ (safest)      │
-├───────────────┼──────────────────────────────┼───────────────┤
-│ Burstable     │ requests < limits            │ Middle        │
-│               │ (most common setup)          │               │
-├───────────────┼──────────────────────────────┼───────────────┤
-│ BestEffort    │ no requests or limits set    │ First evicted │
-│               │                              │ (most risky)  │
-└───────────────┴──────────────────────────────┴───────────────┘
-```
-
-```bash
-# Check QoS class of a pod
-kubectl describe pod resource-demo -n dev | grep "QoS Class"
-# QoS Class: Burstable
-```
-
----
-
-## 🔷 PART 2 — LimitRange
-
-### What is LimitRange?
-
-Sets **default** requests/limits for all pods in a namespace
-that don't specify their own.
-
-```
-Without LimitRange:
-  Dev forgets to set resources in their pod YAML
-  → BestEffort QoS → first evicted → app crashes
-
-With LimitRange:
-  Admin sets namespace defaults
-  → every pod gets sensible defaults automatically
-```
-
-```yaml
-# limitrange.yaml
-apiVersion: v1
-kind: LimitRange
-metadata:
-  name: dev-limitrange
-  namespace: dev
-spec:
-  limits:
-    - type: Container
-      default:                    # applied if no limits set
-        memory: "256Mi"
-        cpu: "500m"
-      defaultRequest:             # applied if no requests set
-        memory: "128Mi"
-        cpu: "250m"
-      max:                        # no container can exceed this
-        memory: "1Gi"
-        cpu: "2000m"
-      min:                        # no container can go below this
-        memory: "64Mi"
-        cpu: "100m"
-```
-
-```bash
-kubectl apply -f limitrange.yaml
-
-# Now any pod in 'dev' namespace without resources
-# automatically gets defaults ✅
-
-kubectl describe limitrange dev-limitrange -n dev
-```
-
----
-
-## 🔷 PART 3 — ResourceQuota
-
-### What is ResourceQuota?
-
-LimitRange = per container defaults
-ResourceQuota = **total budget for entire namespace**
-
-```
-Team A gets namespace 'team-a':
-  Total CPU:    max 10 cores
-  Total Memory: max 20Gi
-  Total Pods:   max 20
-  Total PVCs:   max 10
-
-Team B gets namespace 'team-b':
-  Total CPU:    max 4 cores
-  Total Memory: max 8Gi
-  Total Pods:   max 10
-
-Teams are isolated — one team can't steal
-resources from another ✅
-```
-
-```yaml
-# resourcequota.yaml
-apiVersion: v1
-kind: ResourceQuota
-metadata:
-  name: dev-quota
-  namespace: dev
-spec:
-  hard:
-    # Compute resources
-    requests.cpu: "4"              # total CPU requests in namespace
-    requests.memory: "8Gi"        # total memory requests
-    limits.cpu: "8"               # total CPU limits
-    limits.memory: "16Gi"         # total memory limits
-
-    # Object count limits
-    pods: "20"                    # max 20 pods
-    services: "10"                # max 10 services
-    persistentvolumeclaims: "10"  # max 10 PVCs
-    secrets: "20"                 # max 20 secrets
-    configmaps: "20"              # max 20 configmaps
-
-    # Storage
-    requests.storage: "50Gi"      # total storage requested
-```
-
-```bash
-kubectl apply -f resourcequota.yaml
-
-# Check quota usage
-kubectl get resourcequota -n dev
-kubectl describe resourcequota dev-quota -n dev
-
-# Output:
-# Resource                Used    Hard
-# --------                ----    ----
-# limits.cpu              2       8
-# limits.memory           4Gi     16Gi
-# pods                    8       20
-# requests.cpu            1       4
-# requests.memory         2Gi     8Gi
-# services                3       10
-```
-
----
-
-### 🔷 ResourceQuota Enforcement
-
-```bash
-# Try to create pod that exceeds quota
-kubectl run test-pod --image=nginx \
-  --requests=cpu=5 -n dev
-
-# Error:
-# Error from server (Forbidden):
-# exceeded quota: dev-quota,
-# requested: requests.cpu=5,
-# used: requests.cpu=3,
-# limited: requests.cpu=4  ❌
-
-# This is exactly the protection you want
-```
-
----
-
-## 🔷 PART 4 — Probes
-
-### The 3 Types of Probes
-
-```
-┌──────────────────┬──────────────────────────────────────────┐
-│  Liveness Probe  │ Is the app ALIVE?                        │
-│                  │ Fails → container RESTARTED              │
-├──────────────────┼──────────────────────────────────────────┤
-│  Readiness Probe │ Is the app READY for traffic?            │
-│                  │ Fails → removed from Service endpoints   │
-│                  │ (no restart — just stops getting traffic)│
-├──────────────────┼──────────────────────────────────────────┤
-│  Startup Probe   │ Has the app FINISHED starting?           │
-│                  │ Disables liveness/readiness until done   │
-│                  │ For slow-starting apps                   │
-└──────────────────┴──────────────────────────────────────────┘
-```
-
----
-
-### 🔷 Probe Mechanisms
-
-All 3 probe types can use any of these mechanisms:
-
-```
-httpGet     → HTTP GET request to container
-              Success: 200-399 status code
-              Failure: 4xx/5xx or no response
-
-tcpSocket   → TCP connection attempt
-              Success: connection established
-              Failure: connection refused
-
-exec        → Run a command inside container
-              Success: exit code 0
-              Failure: non-zero exit code
-
-grpc        → gRPC health check
-              For gRPC-based services
-```
-
----
-
-### 🛠️ Liveness Probe
-
-> "Is this container still working? Or is it stuck/deadlocked?"
-
-```yaml
-# liveness-probe.yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: liveness-demo
-  namespace: dev
-spec:
-  containers:
-    - name: app
-      image: my-app:latest
-      ports:
-        - containerPort: 8080
-
-      livenessProbe:
-        httpGet:
-          path: /healthz          # health endpoint in your app
-          port: 8080
-        initialDelaySeconds: 15   # wait 15s before first check
-                                  # (let app start up)
-        periodSeconds: 20         # check every 20 seconds
-        failureThreshold: 3       # fail 3 times → restart container
-        successThreshold: 1       # 1 success = considered alive
-        timeoutSeconds: 5         # wait max 5s for response
-```
-
-```
-Timeline:
-  t=0s:  Container starts
-  t=15s: First liveness check → /healthz → 200 OK ✅
-  t=35s: Check → 200 OK ✅
-  t=55s: Check → 500 Error ❌ (fail 1/3)
-  t=75s: Check → 500 Error ❌ (fail 2/3)
-  t=95s: Check → 500 Error ❌ (fail 3/3)
-         → Container RESTARTED 🔄
-  t=110s: First check on restarted container...
-```
-
----
-
-**Liveness with exec:**
-```yaml
-livenessProbe:
-  exec:
-    command:
-      - sh
-      - -c
-      - "redis-cli ping | grep PONG"  # exit 0 if redis is up
-  initialDelaySeconds: 10
-  periodSeconds: 15
-```
-
-**Liveness with TCP:**
-```yaml
-livenessProbe:
-  tcpSocket:
-    port: 3306          # can we connect to MySQL port?
-  initialDelaySeconds: 15
-  periodSeconds: 20
-```
-
----
-
-### 🛠️ Readiness Probe
-
-> "Is this container ready to receive traffic?"
-
-```yaml
-# readiness-probe.yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: readiness-demo
-  namespace: dev
-spec:
-  containers:
-    - name: app
-      image: my-app:latest
-
-      readinessProbe:
-        httpGet:
-          path: /ready             # readiness endpoint
-          port: 8080
-        initialDelaySeconds: 5    # check sooner than liveness
-        periodSeconds: 10
-        failureThreshold: 3       # fail 3 times → remove from LB
-        successThreshold: 2       # need 2 successes to add back to LB
-```
-
-```
-What happens when readiness fails:
-
-  Pod is Running ✅ (not restarted)
-  But removed from Service Endpoints ❌
-
-  Service: backend-service
-    Endpoints BEFORE fail: 10.244.1.5, 10.244.1.6, 10.244.1.7
-    Endpoints AFTER fail:  10.244.1.5, 10.244.1.7
-                           ↑ 10.244.1.6 removed — no traffic sent to it
-
-  Pod recovers → readiness passes again
-    Endpoints: 10.244.1.5, 10.244.1.6, 10.244.1.7 ✅
-```
-
----
-
-### 🔷 Liveness vs Readiness — The Key Difference
+## 🔷 Two Mechanisms — Know the Difference
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
-│  LIVENESS fails  → container RESTARTED                     │
-│                    "This is broken, reboot it"             │
+│  TAINTS + TOLERATIONS  →  Node says "STAY AWAY"            │
+│  (push mechanism)         Pod says "I can tolerate that"   │
 │                                                             │
-│  READINESS fails → pod removed from Service                │
-│                    container NOT restarted                  │
-│                    "Not ready yet, don't send traffic"      │
+│  NODE AFFINITY         →  Pod says "I WANT to go there"    │
+│  (pull mechanism)         Based on node labels             │
 │                                                             │
+│  Use both together for precise control ✅                   │
 └─────────────────────────────────────────────────────────────┘
-
-Real example:
-  App is loading large config file on startup (takes 30 seconds)
-
-  ❌ Liveness probe → restarts app every 30s because it's "failing"
-     → infinite restart loop → app never starts
-
-  ✅ Readiness probe → holds traffic back for 30s
-     → app finishes loading → starts receiving traffic
 ```
 
 ---
 
-### 🛠️ Startup Probe
+## 🔷 PART 1 — Taints & Tolerations
 
-> For apps that take a long time to start (Java, legacy apps)
+### What is a Taint?
+
+A taint is applied to a **node**.
+It says: **"Repel all pods unless they tolerate this taint."**
+
+```
+Node with taint:
+  gpu=true:NoSchedule
+
+Effect on scheduler:
+  Regular pod    → ❌ cannot schedule on this node
+  Pod with toleration for gpu=true → ✅ can schedule here
+```
+
+---
+
+### 🔷 Taint Structure
+
+```
+kubectl taint nodes <node-name> key=value:effect
+
+Three parts:
+  key=value  →  the taint identifier
+               e.g. gpu=true, team=ml, env=prod
+
+  effect     →  what happens to intolerant pods
+               NoSchedule    → don't schedule here (hard rule)
+               PreferNoSchedule → try not to, but ok if needed
+               NoExecute     → evict existing pods + no new ones
+```
+
+---
+
+### 🛠️ Adding Taints to Nodes
+
+```bash
+# Taint a node — only GPU workloads allowed
+kubectl taint nodes node-1 gpu=true:NoSchedule
+
+# Taint for spot instances
+kubectl taint nodes node-2 spot=true:NoSchedule
+
+# Taint with NoExecute — evicts existing pods too
+kubectl taint nodes node-3 maintenance=true:NoExecute
+
+# View taints on a node
+kubectl describe node node-1 | grep Taints
+# Taints: gpu=true:NoSchedule
+
+# Remove a taint (add minus at end)
+kubectl taint nodes node-1 gpu=true:NoSchedule-
+```
+
+---
+
+### 🔷 Taint Effects Deep Dive
+
+```
+NoSchedule:
+  → New pods without toleration: NOT scheduled here
+  → Existing pods already running: NOT evicted (stay)
+  → Use for: dedicated nodes going forward
+
+PreferNoSchedule:
+  → Scheduler TRIES to avoid this node
+  → If no other option: pod CAN land here
+  → Soft rule — not guaranteed
+  → Use for: soft preferences
+
+NoExecute:
+  → New pods without toleration: NOT scheduled
+  → Existing pods without toleration: EVICTED immediately
+  → Existing pods WITH toleration: can set tolerationSeconds
+  → Use for: node maintenance, draining nodes
+```
+
+---
+
+### What is a Toleration?
+
+A toleration is applied to a **pod**.
+It says: **"I can tolerate this taint — schedule me there."**
 
 ```yaml
-# startup-probe.yaml
+# pod-with-toleration.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ml-training-pod
+  namespace: dev
 spec:
+  tolerations:
+    - key: "gpu"               # must match taint key
+      operator: "Equal"        # Equal or Exists
+      value: "true"            # must match taint value
+      effect: "NoSchedule"     # must match taint effect
+
   containers:
-    - name: legacy-java-app
-      image: legacy-app:latest
-
-      startupProbe:
-        httpGet:
-          path: /healthz
-          port: 8080
-        failureThreshold: 30     # allow up to 30 failures
-        periodSeconds: 10        # check every 10s
-        # = allows up to 30 × 10 = 300 seconds (5 min) to start
-
-      livenessProbe:             # only activates AFTER startup probe passes
-        httpGet:
-          path: /healthz
-          port: 8080
-        periodSeconds: 20
-        failureThreshold: 3
-
-      readinessProbe:            # only activates AFTER startup probe passes
-        httpGet:
-          path: /ready
-          port: 8080
-        periodSeconds: 10
-```
-
-```
-Without startupProbe:
-  Java app takes 3 minutes to start
-  Liveness probe set to fail after 1 minute
-  → App killed before it finishes starting
-  → Infinite CrashLoopBackOff 💀
-
-With startupProbe:
-  Liveness/Readiness disabled until startup probe passes
-  App gets full 5 minutes to start
-  After startup passes → normal probes take over ✅
+    - name: ml-trainer
+      image: tensorflow/tensorflow:latest-gpu
+      resources:
+        limits:
+          nvidia.com/gpu: 1    # request 1 GPU
 ```
 
 ---
 
-### 🛠️ Full Production Pod — Everything Together
+### 🔷 Toleration Operators
 
 ```yaml
-# production-pod.yaml
+# Equal — key AND value must match exactly
+tolerations:
+  - key: "gpu"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+# Exists — only key needs to match (any value)
+tolerations:
+  - key: "gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+
+# Tolerate ALL taints on a node (empty key)
+tolerations:
+  - operator: "Exists"      # matches any taint
+# Use for: system pods that must run everywhere
+# (kube-proxy, fluentd DaemonSets use this)
+```
+
+---
+
+### 🔷 NoExecute with tolerationSeconds
+
+```yaml
+# pod that tolerates maintenance taint — but only for 1 hour
+tolerations:
+  - key: "maintenance"
+    operator: "Equal"
+    value: "true"
+    effect: "NoExecute"
+    tolerationSeconds: 3600   # stay for 1 hour then evict
+
+# Use case:
+# Node going into maintenance
+# Critical pods get graceful 1-hour window to finish work
+# After 1 hour → evicted and rescheduled elsewhere
+```
+
+---
+
+### 🔷 Real World Taint Scenarios
+
+**Scenario 1 — Dedicated GPU nodes:**
+```bash
+# Admin taints GPU nodes
+kubectl taint nodes gpu-node-1 gpu=true:NoSchedule
+kubectl taint nodes gpu-node-2 gpu=true:NoSchedule
+
+# Only ML pods with this toleration land on GPU nodes
+# All other pods stay off GPU nodes automatically ✅
+```
+
+**Scenario 2 — Spot instance nodes:**
+```bash
+# AWS adds this taint automatically to spot nodes
+kubectl taint nodes spot-node-1 \
+  node.kubernetes.io/spot=true:NoSchedule
+
+# Only batch jobs with spot toleration schedule here
+# Regular production pods never land on unstable spot nodes ✅
+```
+
+**Scenario 3 — Node maintenance:**
+```bash
+# Node going down for maintenance
+kubectl taint nodes worker-3 maintenance=true:NoExecute
+
+# All pods evicted immediately
+# Rescheduled on healthy nodes
+# Safer than: kubectl drain (which also cordons) ✅
+```
+
+---
+
+## 🔷 PART 2 — Node Affinity
+
+### What is Node Affinity?
+
+While taints repel pods, **Node Affinity attracts pods to specific nodes** based on node labels.
+
+```
+Taints/Tolerations  →  "Keep pods OFF this node"  (push)
+Node Affinity       →  "Put pods ON this node"    (pull)
+```
+
+---
+
+### 🔷 Step 1 — Label Your Nodes
+
+```bash
+# Label nodes with their characteristics
+kubectl label nodes node-1 gpu=true
+kubectl label nodes node-1 instance-type=p3.2xlarge
+
+kubectl label nodes node-2 disk=ssd
+kubectl label nodes node-2 zone=us-east-1a
+
+kubectl label nodes node-3 team=data-engineering
+kubectl label nodes node-3 memory=high
+
+# View node labels
+kubectl get nodes --show-labels
+kubectl describe node node-1 | grep Labels
+```
+
+---
+
+### 🔷 Node Affinity Types
+
+```
+requiredDuringSchedulingIgnoredDuringExecution
+  → HARD rule
+  → Pod MUST land on matching node
+  → If no matching node → pod stays Pending
+  → "Required" = must have this
+
+preferredDuringSchedulingIgnoredDuringExecution
+  → SOFT rule
+  → Scheduler PREFERS matching node
+  → If no matching node → schedules elsewhere
+  → "Preferred" = nice to have
+```
+
+> "IgnoredDuringExecution" means: if node labels change after pod is running, pod is NOT evicted. (There's a future `RequiredDuringExecution` type coming but not stable yet.)
+
+---
+
+### 🛠️ Node Affinity YAML
+
+**Required (hard) affinity:**
+
+```yaml
+# required-affinity.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-pod
+  namespace: dev
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: gpu              # node must have this label
+                operator: In
+                values:
+                  - "true"           # label value must be "true"
+
+  containers:
+    - name: ml-app
+      image: tensorflow/tensorflow:gpu
+```
+
+---
+
+**Preferred (soft) affinity:**
+
+```yaml
+# preferred-affinity.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-pod
+  namespace: dev
+spec:
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 80                  # higher weight = stronger preference
+          preference:
+            matchExpressions:
+              - key: disk
+                operator: In
+                values:
+                  - ssd               # prefer SSD nodes
+
+        - weight: 20                  # lower weight = weaker preference
+          preference:
+            matchExpressions:
+              - key: zone
+                operator: In
+                values:
+                  - us-east-1a        # prefer this AZ
+
+  containers:
+    - name: web
+      image: nginx:1.25
+```
+
+---
+
+**Both required AND preferred:**
+
+```yaml
+spec:
+  affinity:
+    nodeAffinity:
+
+      # MUST be on a node with gpu=true
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: gpu
+                operator: In
+                values: ["true"]
+
+      # PREFER nodes in us-east-1a
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: zone
+                operator: In
+                values: ["us-east-1a"]
+```
+
+---
+
+### 🔷 Affinity Operators
+
+```
+In          → label value is IN the list
+              key: zone, values: [us-east-1a, us-east-1b]
+
+NotIn       → label value NOT in the list
+              key: env, values: [test, dev]  ← avoid test/dev nodes
+
+Exists      → label key exists (any value)
+              key: gpu  ← node has any gpu label
+
+DoesNotExist → label key does NOT exist
+               key: tainted  ← node has no 'tainted' label
+
+Gt          → label value greater than number
+              key: memory-gb, values: ["16"]  ← 16GB+ nodes
+
+Lt          → label value less than number
+              key: cpu-cores, values: ["8"]   ← less than 8 cores
+```
+
+---
+
+## 🔷 PART 3 — Pod Affinity & Anti-Affinity
+
+### Pod Affinity — Place pods NEAR each other
+
+```
+Use case:
+  Frontend pod and backend pod
+  → should be on same node or same zone
+  → to reduce network latency
+```
+
+```yaml
+# pod-affinity.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend-pod
+  namespace: dev
+spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - backend          # schedule near pods with app=backend
+          topologyKey: "kubernetes.io/hostname"
+          # topologyKey = what "near" means:
+          # hostname → same node
+          # zone     → same availability zone
+          # region   → same region
+
+  containers:
+    - name: frontend
+      image: frontend:latest
+```
+
+---
+
+### Pod Anti-Affinity — Spread pods AWAY from each other
+
+```
+Use case:
+  3 replicas of same app
+  → spread across different nodes
+  → if one node dies, not all replicas die
+```
+
+```yaml
+# pod-anti-affinity.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: production-app
-  namespace: production
+  name: web-app
+  namespace: dev
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: production-app
+      app: web
   template:
     metadata:
       labels:
-        app: production-app
+        app: web
     spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - web          # don't schedule near other web pods
+              topologyKey: "kubernetes.io/hostname"
+              # Each replica MUST be on different node ✅
+
       containers:
-        - name: app
-          image: myapp:v2.1
-          ports:
-            - containerPort: 8080
+        - name: web
+          image: nginx:1.25
+```
 
-          # Resources — always set these
-          resources:
-            requests:
-              memory: "128Mi"
-              cpu: "250m"
-            limits:
-              memory: "256Mi"
-              cpu: "500m"
+```
+Result:
+  Pod-1 → Node-1   ✅
+  Pod-2 → Node-2   ✅
+  Pod-3 → Node-3   ✅
 
-          # Startup — for slow starters
-          startupProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            failureThreshold: 12
-            periodSeconds: 5        # 60 seconds to start
-
-          # Liveness — restart if broken
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 0  # startup probe handles this
-            periodSeconds: 15
-            failureThreshold: 3
-            timeoutSeconds: 3
-
-          # Readiness — hold traffic until ready
-          readinessProbe:
-            httpGet:
-              path: /ready
-              port: 8080
-            initialDelaySeconds: 0
-            periodSeconds: 5
-            failureThreshold: 3
-            successThreshold: 1
-            timeoutSeconds: 3
-
-          # Config from ConfigMap & Secret
-          envFrom:
-            - configMapRef:
-                name: app-config
-            - secretRef:
-                name: app-secret
+  Node-1 dies → Pod-1 lost
+  But Pod-2 and Pod-3 still running on other nodes
+  App still available ✅
 ```
 
 ---
 
-## 🔷 What Your App Needs to Implement
+## 🔷 PART 4 — Taints + Affinity Together (Production Pattern)
 
-For probes to work, your app must expose health endpoints:
+### Dedicated Node Pool Pattern
 
-```python
-# Django / Python example
-from django.http import JsonResponse
+```
+Goal:
+  GPU nodes → ONLY ML workloads
+  No other pods can land there
+  ML pods ALWAYS land there
 
-def healthz(request):
-    # liveness — is app alive?
-    return JsonResponse({"status": "ok"}, status=200)
-
-def ready(request):
-    # readiness — can we handle traffic?
-    try:
-        # check DB connection
-        from django.db import connection
-        connection.ensure_connection()
-        return JsonResponse({"status": "ready"}, status=200)
-    except Exception:
-        return JsonResponse({"status": "not ready"}, status=503)
+Solution:
+  Taint GPU nodes     → repels everyone except ML pods
+  Node Affinity on ML → attracts ML pods to GPU nodes
 ```
 
-```javascript
-// Express / Node.js example
-app.get('/healthz', (req, res) => {
-  res.status(200).json({ status: 'ok' })
-})
+```bash
+# Step 1: Label GPU nodes
+kubectl label nodes gpu-node-1 workload=ml
+kubectl label nodes gpu-node-2 workload=ml
 
-app.get('/ready', async (req, res) => {
-  try {
-    await db.ping()              // check DB
-    await redis.ping()           // check cache
-    res.status(200).json({ status: 'ready' })
-  } catch (err) {
-    res.status(503).json({ status: 'not ready', error: err.message })
-  }
-})
+# Step 2: Taint GPU nodes
+kubectl taint nodes gpu-node-1 dedicated=ml:NoSchedule
+kubectl taint nodes gpu-node-2 dedicated=ml:NoSchedule
+```
+
+```yaml
+# Step 3: ML pod has BOTH toleration AND affinity
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ml-training
+spec:
+  # Toleration = can land on tainted GPU node
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "ml"
+      effect: "NoSchedule"
+
+  # Affinity = PREFER to land on GPU node
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: workload
+                operator: In
+                values: ["ml"]
+
+  containers:
+    - name: trainer
+      image: tensorflow/tensorflow:latest-gpu
+```
+
+```
+Result:
+  GPU nodes: ONLY accept ML pods ✅
+  ML pods:   ONLY land on GPU nodes ✅
+  Clean separation, no accidents
 ```
 
 ---
 
-## ✅ Chapter 10 Summary
+## 🔷 nodeName & nodeSelector (Simpler Alternatives)
+
+```yaml
+# nodeName — schedule on EXACT node (rarely used)
+spec:
+  nodeName: worker-node-1    # hardcoded — not flexible
+
+# nodeSelector — simple label matching (older approach)
+spec:
+  nodeSelector:
+    gpu: "true"              # simple key=value match
+                             # no operators, no soft rules
+                             # use nodeAffinity for complex rules
+```
+
+---
+
+## ✅ Chapter 11 Summary
 
 | Concept | Key Point |
 |---|---|
-| requests | Min guaranteed resources — used by scheduler |
-| limits | Max allowed — CPU throttled, memory OOMKilled |
-| LimitRange | Default requests/limits per namespace |
-| ResourceQuota | Total resource budget for entire namespace |
-| Liveness Probe | Is app alive? Fails → container restarted |
-| Readiness Probe | Is app ready? Fails → removed from Service endpoints |
-| Startup Probe | Has app finished starting? Blocks liveness/readiness |
-| httpGet | Most common probe mechanism — hit health endpoint |
-| OOMKilled | Container exceeded memory limit — killed by k8s |
-| QoS Guaranteed | requests == limits — safest, last to be evicted |
+| Taint | Applied to node — repels pods without toleration |
+| Toleration | Applied to pod — allows scheduling on tainted node |
+| NoSchedule | Don't schedule new pods — existing pods safe |
+| NoExecute | Don't schedule + evict existing pods |
+| PreferNoSchedule | Soft version of NoSchedule |
+| Node Affinity | Pod attracted to nodes with specific labels |
+| required | Hard rule — pod stays Pending if no match |
+| preferred | Soft rule — scheduler tries but not guaranteed |
+| Pod Affinity | Schedule pod near other specific pods |
+| Pod Anti-Affinity | Spread pods across nodes — for HA |
 
 ---
 
 ## 🧠 Interview Questions You Can Now Nail
 
-1. **"What's the difference between requests and limits?"**
-   → Requests are the minimum guaranteed resources used by the scheduler to place pods. Limits are the maximum — CPU is throttled at the limit, memory causes OOMKill if exceeded.
+1. **"What is the difference between Taints and Node Affinity?"**
+   → Taints are applied to nodes to repel pods — push mechanism. Node Affinity is applied to pods to attract them to specific nodes — pull mechanism. Use both together for dedicated node pools.
 
-2. **"What is the difference between Liveness and Readiness probes?"**
-   → Liveness failure restarts the container — for deadlocks or crashes. Readiness failure removes the pod from Service endpoints without restarting — for temporary unavailability like loading data or waiting for a dependency.
+2. **"What is the difference between NoSchedule and NoExecute?"**
+   → NoSchedule prevents new pods from scheduling on the node but leaves existing pods running. NoExecute also evicts existing pods that don't tolerate the taint.
 
-3. **"What is a Startup Probe and when do you need it?"**
-   → Delays liveness and readiness probes until the app finishes starting. Needed for slow-starting apps like Java services — prevents premature liveness failures causing infinite restart loops.
+3. **"How do you ensure a Deployment's replicas spread across nodes?"**
+   → Pod Anti-Affinity with `requiredDuringScheduling` and `topologyKey: kubernetes.io/hostname`. Forces each replica onto a different node for high availability.
 
-4. **"What is ResourceQuota and why is it important?"**
-   → Sets a total resource budget for a namespace. Prevents one team or app from consuming all cluster resources, enforces fair resource sharing across teams.
+4. **"What happens if no node matches a required Node Affinity rule?"**
+   → Pod stays in Pending state indefinitely until a matching node becomes available. This is why preferred affinity is safer when you can't guarantee node availability.
 
-5. **"What happens when a pod exceeds its memory limit?"**
-   → It gets OOMKilled — the container is terminated immediately. K8s restarts it. If this keeps happening you'll see OOMKilled in pod status and need to either fix the memory leak or increase the limit.
+5. **"How would you set up dedicated GPU nodes in k8s?"**
+   → Label GPU nodes, taint them with `dedicated=gpu:NoSchedule`, then add matching toleration and required node affinity to ML pods. Taint keeps non-ML pods off, affinity ensures ML pods land there.
 
 ---
 
-Ready for **Chapter 11 → Taints, Tolerations & Node Affinity** — how to control exactly **which pods run on which nodes**? Critical for prod clusters with GPU nodes, spot instances, and dedicated workloads. Say **"next"** 🚀
+Ready for **Chapter 12 → HPA & VPA** — auto-scaling your apps based on real traffic and resource usage? One of the most powerful k8s features and a top interview topic. Say **"next"** 🚀
