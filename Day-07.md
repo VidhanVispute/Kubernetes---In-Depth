@@ -8,7 +8,7 @@
 
 ```
 Containers are ephemeral by nature:
-
+ 
   Container starts  → gets fresh filesystem
   Container crashes → filesystem WIPED
   Container restarts → starts fresh again
