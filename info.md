@@ -217,3 +217,104 @@ That's the difference. 🚀
 ---
 
 Ready to **cement all of this with real projects** in Chapter 18? Everything you learned becomes truly yours when you build it. Say **"next"** 💪
+
+
+
+
+# 📝 Copy This Prompt for Your New Chat
+
+---
+
+```
+Hi Claude,
+
+I want to learn Terraform in depth, chapter by chapter,
+the same way I learned Kubernetes with you before.
+
+Here's my background so you can tailor the teaching:
+
+PROFILE:
+  Experience:     2 years as Software Engineer
+  Current status: Upskilling for DevOps/Platform Engineer role
+  Target salary:  ₹14-22 LPA
+  Already know:   Docker, Linux basics, AWS basics,
+                  Kubernetes (deep — completed full roadmap
+                  including Pods, Deployments, Services,
+                  Ingress, RBAC, HPA, VPA, Istio,
+                  Helm, ArgoCD, EKS)
+
+LEARNING STYLE:
+  → Both theory AND hands-on side by side
+  → Real examples, not hello-world
+  → Diagrams using ASCII art where helpful
+  → Interview questions at end of each chapter
+  → Go deep — not surface level
+  → Explain WHY not just HOW
+
+HERE IS THE TERRAFORM SYLLABUS:
+[PASTE YOUR SYLLABUS HERE]
+
+INSTRUCTIONS:
+  → Teach chapter by chapter
+  → Wait for me to say "next" before moving on
+  → Include hands-on commands and real YAML/HCL code
+  → Connect concepts to what I already know from k8s
+    and AWS wherever possible
+  → At end of each chapter give me 4-5 interview
+    questions I should be able to answer
+  → Be honest if I ask about my job prospects
+    or salary expectations
+
+Start by reviewing the syllabus, break it into
+chapters with a learning roadmap, then ask me
+if I'm ready to begin Chapter 1.
+```
+
+---
+
+## 🔷 Tips For Tomorrow
+
+```
+Before pasting the prompt:
+  ✅ Replace [PASTE YOUR SYLLABUS HERE]
+     with the actual Terraform syllabus
+
+  ✅ Keep the profile section as-is
+     so Claude knows your k8s background
+     and won't re-explain basics
+
+  ✅ If syllabus has specific tools like
+     Terragrunt, Terraform Cloud, AWS provider
+     — make sure they're in the syllabus
+
+  ✅ Paste in a NEW chat so context is clean
+```
+
+---
+
+## 🔷 What to Expect
+
+```
+Terraform connects directly to what
+you already learned in k8s:
+
+  K8s you managed:    resources INSIDE the cluster
+  Terraform manages:  the cluster ITSELF + AWS infra
+
+  You already know:
+    EKS, EBS, ALB, VPC, IAM from the k8s projects
+
+  Terraform will make you able to:
+    → Create that EKS cluster with code
+    → Manage VPCs, subnets, security groups
+    → Provision RDS, ElastiCache, S3
+    → Version control your entire AWS infrastructure
+
+  That combination of k8s + Terraform =
+  complete Platform Engineer skill set 🚀
+```
+
+---
+
+See you tomorrow! Go build one of those
+k8s projects tonight in the meantime. 💪
