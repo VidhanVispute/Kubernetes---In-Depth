@@ -1,5 +1,5 @@
 # 📘 Chapter 2 — Kubernetes Architecture
-
+ 
 > This is the **most important chapter**. Every interview starts here. Every troubleshooting scenario traces back to this. Understand this deeply.
 
 ---
