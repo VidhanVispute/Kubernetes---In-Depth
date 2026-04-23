@@ -182,6 +182,18 @@ This is the **Sidecar pattern** — covered in a later chapter.
 
 > **Rule of thumb:** 1 container per pod in most cases. Multi-container pods are for specific patterns only.
 
+### 🚗 What is Sidecar Pattern (no nonsense)
+
+Sidecar = an extra container running alongside your main app container inside the same Pod
+
+👉 Same Pod
+👉 Same network
+👉 Same lifecycle
+
+🧠 Simple definition (interview-ready)
+
+“Sidecar pattern is a design where a helper container runs alongside the main application container in the same Pod to handle supporting concerns like logging, monitoring, or proxying.”
+
 ---
 
 ### 🛠️ Your First Pod — Hands On
