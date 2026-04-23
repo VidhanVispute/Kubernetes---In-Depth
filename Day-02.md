@@ -38,8 +38,8 @@ These nodes are divided into **2 types:**
 │  │   CONTROL PLANE │      │      WORKER NODES        │  │
 │  │  (Master Node)  │      │                          │  │
 │  │                 │      │  ┌─────────┐ ┌─────────┐ │  │
-│  │  The "Brain"    │─────▶│  │ Node 1  │ │ Node 2  │ │  │
-│  │  Manages everything   │  │(runs    │ │(runs    │ │  │
+│  │  The "Brain"    │────▶│  │ Node 1  │ │ Node 2  │ │  │
+│  │  Manages everything    │  │(runs    │ │(runs    │ │  │
 │  │                 │      │  │ pods)   │ │ pods)   │ │  │
 │  └─────────────────┘      │  └─────────┘ └─────────┘ │  │
 │                           └──────────────────────────┘  │
@@ -57,7 +57,7 @@ Let's go one by one. These run on the **master node**.
 
 ---
 
-### 1️⃣ API Server (`kube-apiserver`)
+### 1️⃣ API Server (`kube-apiserver`) (Reception desk)
 
 ```
          You (kubectl)
@@ -81,7 +81,7 @@ Let's go one by one. These run on the **master node**.
 
 ---
 
-### 2️⃣ etcd
+### 2️⃣ etcd (Company database)
 
 ```
      ┌─────────────────┐
@@ -105,7 +105,7 @@ value: {name: my-app-pod, image: nginx, status: Running, node: worker-1}
 
 ---
 
-### 3️⃣ Scheduler (`kube-scheduler`)
+### 3️⃣ Scheduler (`kube-scheduler`) (HR assigning employees)
 
 ```
      ┌─────────────────┐
@@ -128,7 +128,7 @@ value: {name: my-app-pod, image: nginx, status: Running, node: worker-1}
 
 ---
 
-### 4️⃣ Controller Manager (`kube-controller-manager`)
+### 4️⃣ Controller Manager (`kube-controller-manager`) (Manager checking work)
 
 ```
      ┌──────────────────────┐
@@ -183,7 +183,7 @@ These run on **every worker node**.
 
 ---
 
-### 1️⃣ Kubelet
+### 1️⃣ Kubelet (Team lead)
 
 ```
      ┌─────────────────┐
@@ -203,7 +203,7 @@ These run on **every worker node**.
 
 ---
 
-### 2️⃣ Kube-proxy
+### 2️⃣ Kube-proxy (Network/security guy)
 
 ```
      ┌─────────────────┐
@@ -219,7 +219,7 @@ These run on **every worker node**.
 
 ---
 
-### 3️⃣ Container Runtime
+### 3️⃣ Container Runtime (Machine/tools)
 
 ```
      ┌─────────────────┐
